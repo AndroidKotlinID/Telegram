@@ -947,7 +947,10 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
             permissons.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
         }
         String[] items = permissons.toArray(new String[permissons.size()]);
-        activity.requestPermissions(items, 1);
+        try {
+            activity.requestPermissions(items, 1);
+        } catch (Exception ignore) {
+        }
     }
 
     @Override
@@ -968,11 +971,7 @@ public class DialogsActivity extends BaseFragment implements NotificationCenter.
                     floatingButton.setTranslationY(floatingHidden ? AndroidUtilities.dp(100) : 0);
                     floatingButton.setClickable(!floatingHidden);
                     if (floatingButton != null) {
-                        if (Build.VERSION.SDK_INT < 16) {
-                            floatingButton.getViewTreeObserver().removeGlobalOnLayoutListener(this);
-                        } else {
-                            floatingButton.getViewTreeObserver().removeOnGlobalLayoutListener(this);
-                        }
+                        floatingButton.getViewTreeObserver().removeOnGlobalLayoutListener(this);
                     }
                 }
             });
