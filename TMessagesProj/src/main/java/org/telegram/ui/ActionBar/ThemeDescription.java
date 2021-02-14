@@ -30,6 +30,7 @@ import android.widget.TextView;
 
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.FileLog;
+import org.telegram.ui.Components.AudioPlayerAlert;
 import org.telegram.ui.Components.AvatarDrawable;
 import org.telegram.ui.Components.BackupImageView;
 import org.telegram.ui.Components.ChatBigEmptyView;
@@ -61,6 +62,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 
 import androidx.viewpager.widget.ViewPager;
+
+import com.google.android.exoplayer2.util.Log;
 
 public class ThemeDescription {
 
@@ -237,7 +240,9 @@ public class ThemeDescription {
                 if (drawablesToUpdate[a] == null) {
                     continue;
                 }
-                if (drawablesToUpdate[a] instanceof ScamDrawable) {
+                if (drawablesToUpdate[a] instanceof BackDrawable) {
+                    ((BackDrawable) drawablesToUpdate[a]).setColor(color);
+                } else if (drawablesToUpdate[a] instanceof ScamDrawable) {
                     ((ScamDrawable) drawablesToUpdate[a]).setColor(color);
                 } else if (drawablesToUpdate[a] instanceof RLottieDrawable) {
                     if (lottieLayerName != null) {
@@ -351,6 +356,10 @@ public class ThemeDescription {
             }
         } else if (viewToInvalidate instanceof ContextProgressView) {
             ((ContextProgressView) viewToInvalidate).updateColors();
+        } else if (viewToInvalidate instanceof SeekBarView) {
+            if ((changeFlags & FLAG_PROGRESSBAR) != 0) {
+                ((SeekBarView) viewToInvalidate).setOuterColor(color);
+            }
         }
         if ((changeFlags & FLAG_TEXTCOLOR) != 0) {
             if ((changeFlags & FLAG_CHECKTAG) == 0 || checkTag(currentKey, viewToInvalidate)) {
@@ -428,9 +437,7 @@ public class ThemeDescription {
         if (viewToInvalidate instanceof RecyclerListView) {
             RecyclerListView recyclerListView = (RecyclerListView) viewToInvalidate;
             if ((changeFlags & FLAG_SELECTOR) != 0) {
-                if (currentKey.equals(Theme.key_listSelector)) {
-                    recyclerListView.setListSelectorColor(color);
-                }
+                recyclerListView.setListSelectorColor(color);
             }
             if ((changeFlags & FLAG_FASTSCROLL) != 0) {
                 recyclerListView.updateFastScrollColors();
@@ -529,6 +536,13 @@ public class ThemeDescription {
                     } else if ((changeFlags & FLAG_TEXTCOLOR) != 0) {
                         if (child instanceof TextView) {
                             ((TextView) child).setTextColor(color);
+                        } else if (child instanceof AudioPlayerAlert.ClippingTextViewSwitcher) {
+                            for (int i = 0; i < 2; i++) {
+                                TextView textView = i == 0 ? ((AudioPlayerAlert.ClippingTextViewSwitcher) child).getTextView() : ((AudioPlayerAlert.ClippingTextViewSwitcher) child).getNextTextView();
+                                if (textView != null) {
+                                    textView.setTextColor(color);
+                                }
+                            }
                         }
                     } else if ((changeFlags & FLAG_SERVICEBACKGROUND) != 0) {
                         Drawable background = child.getBackground();
@@ -699,11 +713,38 @@ public class ThemeDescription {
                                     ((RadialProgressView) object).setProgressColor(color);
                                 } else if (object instanceof Paint) {
                                     ((Paint) object).setColor(color);
+                                    child.invalidate();
                                 } else if (object instanceof SeekBarView) {
                                     if ((changeFlags & FLAG_PROGRESSBAR) != 0) {
                                         ((SeekBarView) object).setOuterColor(color);
                                     } else {
                                         ((SeekBarView) object).setInnerColor(color);
+                                    }
+                                } else if (object instanceof AudioPlayerAlert.ClippingTextViewSwitcher) {
+                                    if ((changeFlags & FLAG_FASTSCROLL) != 0) {
+                                        for (int k = 0; k < 2; k++) {
+                                            TextView textView = k == 0 ? ((AudioPlayerAlert.ClippingTextViewSwitcher) object).getTextView() : ((AudioPlayerAlert.ClippingTextViewSwitcher) object).getNextTextView();
+                                            if (textView != null) {
+                                                CharSequence text = textView.getText();
+                                                if (text instanceof SpannedString) {
+                                                    TypefaceSpan[] spans = ((SpannedString) text).getSpans(0, text.length(), TypefaceSpan.class);
+                                                    if (spans != null && spans.length > 0) {
+                                                        for (int i = 0; i < spans.length; i++) {
+                                                            spans[i].setColor(color);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else if ((changeFlags & FLAG_TEXTCOLOR) != 0) {
+                                        if ((changeFlags & FLAG_CHECKTAG) == 0 || checkTag(currentKey, (View) object)) {
+                                            for (int i = 0; i < 2; i++) {
+                                                TextView textView = i == 0 ? ((AudioPlayerAlert.ClippingTextViewSwitcher) object).getTextView() : ((AudioPlayerAlert.ClippingTextViewSwitcher) object).getNextTextView();
+                                                if (textView != null) {
+                                                    textView.setTextColor(color);
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }

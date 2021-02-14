@@ -157,7 +157,7 @@ public class ChangePhoneActivity extends BaseFragment {
         });
 
         ActionBarMenu menu = actionBar.createMenu();
-        doneButton = menu.addItemWithWidth(done_button, R.drawable.ic_done, AndroidUtilities.dp(56));
+        doneButton = menu.addItemWithWidth(done_button, R.drawable.ic_done, AndroidUtilities.dp(56), LocaleController.getString("Done", R.string.Done));
 
         ScrollView scrollView = new ScrollView(context) {
             @Override
@@ -838,7 +838,6 @@ public class ChangePhoneActivity extends BaseFragment {
 
         private Timer timeTimer;
         private Timer codeTimer;
-        private int openTime;
         private final Object timerSync = new Object();
         private int time = 60000;
         private int codeTime = 15000;
@@ -1100,7 +1099,6 @@ public class ChangePhoneActivity extends BaseFragment {
             requestPhone = params.getString("phoneFormated");
             phoneHash = params.getString("phoneHash");
             timeout = time = params.getInt("timeout");
-            openTime = (int) (System.currentTimeMillis() / 1000);
             nextType = params.getInt("nextType");
             pattern = params.getString("pattern");
             length = params.getInt("length");
@@ -1553,7 +1551,7 @@ public class ChangePhoneActivity extends BaseFragment {
     }
 
     @Override
-    public ThemeDescription[] getThemeDescriptions() {
+    public ArrayList<ThemeDescription> getThemeDescriptions() {
         PhoneView phoneView = (PhoneView) views[0];
         LoginActivitySmsView smsView1 = (LoginActivitySmsView) views[1];
         LoginActivitySmsView smsView2 = (LoginActivitySmsView) views[2];
@@ -1643,6 +1641,6 @@ public class ChangePhoneActivity extends BaseFragment {
         arrayList.add(new ThemeDescription(smsView4.blackImageView, ThemeDescription.FLAG_IMAGECOLOR, null, null, null, null, Theme.key_windowBackgroundWhiteBlackText));
         arrayList.add(new ThemeDescription(smsView4.blueImageView, ThemeDescription.FLAG_IMAGECOLOR, null, null, null, null, Theme.key_chats_actionBackground));
 
-        return arrayList.toArray(new ThemeDescription[0]);
+        return arrayList;
     }
 }

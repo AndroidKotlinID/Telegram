@@ -19,6 +19,7 @@ import org.telegram.messenger.ImageReceiver;
 import org.telegram.messenger.LocaleController;
 import org.telegram.messenger.MessageObject;
 import org.telegram.messenger.R;
+import org.telegram.tgnet.TLRPC;
 import org.telegram.ui.ActionBar.SimpleTextView;
 import org.telegram.ui.ActionBar.Theme;
 import org.telegram.ui.Cells.ChatMessageCell;
@@ -41,7 +42,10 @@ public class HintView extends FrameLayout {
     private boolean isTopArrow;
     private String overrideText;
     private int shownY;
+    private float translationY;
+    private float extraTranslationY;
 
+    private int bottomOffset;
     private long showingDuration = 2000;
 
     public HintView(Context context, int type) {
@@ -103,6 +107,15 @@ public class HintView extends FrameLayout {
         }
     }
 
+    public void setExtraTranslationY(float value) {
+        extraTranslationY = value;
+        setTranslationY(extraTranslationY + translationY);
+    }
+
+    public float getBaseTranslationY() {
+        return translationY;
+    }
+
     public boolean showForMessageCell(ChatMessageCell cell, boolean animated) {
         return showForMessageCell(cell, null, 0, 0, animated);
     }
@@ -127,7 +140,7 @@ public class HintView extends FrameLayout {
         if (currentType == 0) {
             ImageReceiver imageReceiver = cell.getPhotoImage();
             top += imageReceiver.getImageY();
-            int height = imageReceiver.getImageHeight();
+            int height = (int) imageReceiver.getImageHeight();
             int bottom = top + height;
             int parentHeight = parentView.getMeasuredHeight();
             if (top <= getMeasuredHeight() + AndroidUtilities.dp(10) || bottom > parentHeight + height / 4) {
@@ -166,9 +179,14 @@ public class HintView extends FrameLayout {
             }
             measure(MeasureSpec.makeMeasureSpec(1000, MeasureSpec.AT_MOST), MeasureSpec.makeMeasureSpec(1000, MeasureSpec.AT_MOST));
 
-            top += AndroidUtilities.dp(22);
-            if (!messageObject.isOutOwner() && cell.isDrawNameLayout()) {
-                top += AndroidUtilities.dp(20);
+            TLRPC.User user = cell.getCurrentUser();
+            if (user != null && user.id == 0) {
+                top += (cell.getMeasuredHeight() - Math.max(0, cell.getBottom() - parentView.getMeasuredHeight()) - AndroidUtilities.dp(50));
+            } else {
+                top += AndroidUtilities.dp(22);
+                if (!messageObject.isOutOwner() && cell.isDrawNameLayout()) {
+                    top += AndroidUtilities.dp(20);
+                }
             }
             if (!isTopArrow && top <= getMeasuredHeight() + AndroidUtilities.dp(10)) {
                 return false;
@@ -178,9 +196,9 @@ public class HintView extends FrameLayout {
 
         int parentWidth = parentView.getMeasuredWidth();
         if (isTopArrow) {
-            setTranslationY(AndroidUtilities.dp(44));
+            setTranslationY(extraTranslationY + (translationY = AndroidUtilities.dp(44)));
         } else {
-            setTranslationY(top - getMeasuredHeight());
+            setTranslationY(extraTranslationY + (translationY = top - getMeasuredHeight()));
         }
         int iconX = cell.getLeft() + centerX;
         int left = AndroidUtilities.dp(19);
@@ -261,6 +279,8 @@ public class HintView extends FrameLayout {
 
         if (currentType == 4) {
             top += AndroidUtilities.dp(4);
+        } else if (currentType == 6) {
+            top += view.getMeasuredHeight() + getMeasuredHeight() + AndroidUtilities.dp(10);
         }
 
         int centerX;
@@ -279,11 +299,13 @@ public class HintView extends FrameLayout {
         centerX -= position[0];
         top -= position[1];
 
+        top -= bottomOffset;
+
         int parentWidth = parentView.getMeasuredWidth();
-        if (isTopArrow) {
-            setTranslationY(AndroidUtilities.dp(44));
+        if (isTopArrow && currentType != 6) {
+            setTranslationY(extraTranslationY + (translationY = AndroidUtilities.dp(44)));
         } else {
-            setTranslationY(top - getMeasuredHeight());
+            setTranslationY(extraTranslationY + (translationY = top - getMeasuredHeight()));
         }
         final int offset;
 
@@ -396,5 +418,9 @@ public class HintView extends FrameLayout {
 
     public void setShowingDuration(long showingDuration) {
         this.showingDuration = showingDuration;
+    }
+
+    public void setBottomOffset(int offset) {
+        this.bottomOffset = offset;
     }
 }

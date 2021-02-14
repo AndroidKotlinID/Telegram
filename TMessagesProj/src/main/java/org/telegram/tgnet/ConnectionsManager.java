@@ -11,14 +11,12 @@ import android.text.TextUtils;
 import android.util.Base64;
 
 import com.google.firebase.remoteconfig.FirebaseRemoteConfig;
-import com.google.firebase.remoteconfig.FirebaseRemoteConfigSettings;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.telegram.messenger.AccountInstance;
 import org.telegram.messenger.AndroidUtilities;
 import org.telegram.messenger.BaseController;
-import org.telegram.messenger.BuildConfig;
 import org.telegram.messenger.BuildVars;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.EmuDetector;
@@ -47,6 +45,7 @@ import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
+import java.util.TimeZone;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -172,6 +171,11 @@ public class ConnectionsManager extends BaseController {
             deviceModel = Build.MANUFACTURER + Build.MODEL;
             PackageInfo pInfo = ApplicationLoader.applicationContext.getPackageManager().getPackageInfo(ApplicationLoader.applicationContext.getPackageName(), 0);
             appVersion = pInfo.versionName + " (" + pInfo.versionCode + ")";
+            if (BuildVars.DEBUG_PRIVATE_VERSION) {
+                appVersion += " pbeta";
+            } else if (BuildVars.DEBUG_VERSION) {
+                appVersion += " beta";
+            }
             systemVersion = "SDK " + Build.VERSION.SDK_INT;
         } catch (Exception e) {
             systemLangCode = "en";
@@ -198,11 +202,10 @@ public class ConnectionsManager extends BaseController {
             pushString = SharedConfig.pushStringStatus;
         }
         String fingerprint = AndroidUtilities.getCertificateSHA256Fingerprint();
-        init(BuildVars.BUILD_VERSION, TLRPC.LAYER, BuildVars.APP_ID, deviceModel, systemVersion, appVersion, langCode, systemLangCode, configPath, FileLog.getNetworkLogPath(), pushString, fingerprint, getUserConfig().getClientUserId(), enablePushConnection);
-        if (currentAccount == 0 && BuildVars.DEBUG_PRIVATE_VERSION) {
-            MozillaDnsLoadTask task = new MozillaDnsLoadTask(currentAccount);
-            task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, null, null, null);
-        }
+
+        int timezoneOffset = (TimeZone.getDefault().getRawOffset() + TimeZone.getDefault().getDSTSavings()) / 1000;
+
+        init(BuildVars.BUILD_VERSION, TLRPC.LAYER, BuildVars.APP_ID, deviceModel, systemVersion, appVersion, langCode, systemLangCode, configPath, FileLog.getNetworkLogPath(), pushString, fingerprint, timezoneOffset, getUserConfig().getClientUserId(), enablePushConnection);
     }
 
     public boolean isPushConnectionEnabled() {
@@ -220,6 +223,10 @@ public class ConnectionsManager extends BaseController {
 
     public int getCurrentTime() {
         return native_getCurrentTime(currentAccount);
+    }
+
+    public int getCurrentDatacenterId() {
+        return native_getCurrentDatacenterId(currentAccount);
     }
 
     public int getTimeDifference() {
@@ -334,7 +341,7 @@ public class ConnectionsManager extends BaseController {
         native_setPushConnectionEnabled(currentAccount, value);
     }
 
-    public void init(int version, int layer, int apiId, String deviceModel, String systemVersion, String appVersion, String langCode, String systemLangCode, String configPath, String logPath, String regId, String cFingerprint, int userId, boolean enablePushConnection) {
+    public void init(int version, int layer, int apiId, String deviceModel, String systemVersion, String appVersion, String langCode, String systemLangCode, String configPath, String logPath, String regId, String cFingerprint, int timezoneOffset, int userId, boolean enablePushConnection) {
         SharedPreferences preferences = ApplicationLoader.applicationContext.getSharedPreferences("mainconfig", Activity.MODE_PRIVATE);
         String proxyAddress = preferences.getString("proxy_ip", "");
         String proxyUsername = preferences.getString("proxy_user", "");
@@ -344,8 +351,17 @@ public class ConnectionsManager extends BaseController {
         if (preferences.getBoolean("proxy_enabled", false) && !TextUtils.isEmpty(proxyAddress)) {
             native_setProxySettings(currentAccount, proxyAddress, proxyPort, proxyUsername, proxyPassword, proxySecret);
         }
+        String installer = "";
+        try {
+            installer = ApplicationLoader.applicationContext.getPackageManager().getInstallerPackageName(ApplicationLoader.applicationContext.getPackageName());
+        } catch (Throwable ignore) {
 
-        native_init(currentAccount, version, layer, apiId, deviceModel, systemVersion, appVersion, langCode, systemLangCode, configPath, logPath, regId, cFingerprint, userId, enablePushConnection, ApplicationLoader.isNetworkOnline(), ApplicationLoader.getCurrentNetworkType());
+        }
+        if (installer == null) {
+            installer = "";
+        }
+
+        native_init(currentAccount, version, layer, apiId, deviceModel, systemVersion, appVersion, langCode, systemLangCode, configPath, logPath, regId, cFingerprint, installer, timezoneOffset, userId, enablePushConnection, ApplicationLoader.isNetworkOnline(), ApplicationLoader.getCurrentNetworkType());
         checkConnection();
     }
 
@@ -499,15 +515,10 @@ public class ConnectionsManager extends BaseController {
         int flags = 0;
         EmuDetector detector = EmuDetector.with(ApplicationLoader.applicationContext);
         if (detector.detect()) {
-            flags |= 1024;
-        }
-        try {
-            String installer = ApplicationLoader.applicationContext.getPackageManager().getInstallerPackageName(ApplicationLoader.applicationContext.getPackageName());
-            if ("com.android.vending".equals(installer)) {
-                flags |= 2048;
+            if (BuildVars.LOGS_ENABLED) {
+                FileLog.d("detected emu");
             }
-        } catch (Throwable ignore) {
-
+            flags |= 1024;
         }
         return flags;
     }
@@ -521,43 +532,46 @@ public class ConnectionsManager extends BaseController {
     }
 
     public static void onRequestNewServerIpAndPort(final int second, final int currentAccount) {
-        Utilities.stageQueue.postRunnable(() -> {
-            if (currentTask != null || second == 0 && Math.abs(lastDnsRequestTime - System.currentTimeMillis()) < 10000 || !ApplicationLoader.isNetworkOnline()) {
-                if (BuildVars.LOGS_ENABLED) {
-                    FileLog.d("don't start task, current task = " + currentTask + " next task = " + second + " time diff = " + Math.abs(lastDnsRequestTime - System.currentTimeMillis()) + " network = " + ApplicationLoader.isNetworkOnline());
+        Utilities.globalQueue.postRunnable(() -> {
+            boolean networkOnline = ApplicationLoader.isNetworkOnline();
+            Utilities.stageQueue.postRunnable(() -> {
+                if (currentTask != null || second == 0 && Math.abs(lastDnsRequestTime - System.currentTimeMillis()) < 10000 || !networkOnline) {
+                    if (BuildVars.LOGS_ENABLED) {
+                        FileLog.d("don't start task, current task = " + currentTask + " next task = " + second + " time diff = " + Math.abs(lastDnsRequestTime - System.currentTimeMillis()) + " network = " + ApplicationLoader.isNetworkOnline());
+                    }
+                    return;
                 }
-                return;
-            }
-            lastDnsRequestTime = System.currentTimeMillis();
-            if (second == 3) {
-                if (BuildVars.LOGS_ENABLED) {
-                    FileLog.d("start mozilla txt task");
+                lastDnsRequestTime = System.currentTimeMillis();
+                if (second == 3) {
+                    if (BuildVars.LOGS_ENABLED) {
+                        FileLog.d("start mozilla txt task");
+                    }
+                    MozillaDnsLoadTask task = new MozillaDnsLoadTask(currentAccount);
+                    task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, null, null, null);
+                    currentTask = task;
+                } else if (second == 2) {
+                    if (BuildVars.LOGS_ENABLED) {
+                        FileLog.d("start google txt task");
+                    }
+                    GoogleDnsLoadTask task = new GoogleDnsLoadTask(currentAccount);
+                    task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, null, null, null);
+                    currentTask = task;
+                } else if (second == 1) {
+                    if (BuildVars.LOGS_ENABLED) {
+                        FileLog.d("start dns txt task");
+                    }
+                    DnsTxtLoadTask task = new DnsTxtLoadTask(currentAccount);
+                    task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, null, null, null);
+                    currentTask = task;
+                } else {
+                    if (BuildVars.LOGS_ENABLED) {
+                        FileLog.d("start firebase task");
+                    }
+                    FirebaseTask task = new FirebaseTask(currentAccount);
+                    task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, null, null, null);
+                    currentTask = task;
                 }
-                MozillaDnsLoadTask task = new MozillaDnsLoadTask(currentAccount);
-                task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, null, null, null);
-                currentTask = task;
-            } else if (second == 2) {
-                if (BuildVars.LOGS_ENABLED) {
-                    FileLog.d("start google txt task");
-                }
-                GoogleDnsLoadTask task = new GoogleDnsLoadTask(currentAccount);
-                task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, null, null, null);
-                currentTask = task;
-            } else if (second == 1) {
-                if (BuildVars.LOGS_ENABLED) {
-                    FileLog.d("start dns txt task");
-                }
-                DnsTxtLoadTask task = new DnsTxtLoadTask(currentAccount);
-                task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, null, null, null);
-                currentTask = task;
-            } else {
-                if (BuildVars.LOGS_ENABLED) {
-                    FileLog.d("start firebase task");
-                }
-                FirebaseTask task = new FirebaseTask(currentAccount);
-                task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, null, null, null);
-                currentTask = task;
-            }
+            });
         });
     }
 
@@ -634,7 +648,7 @@ public class ConnectionsManager extends BaseController {
             }
             AccountInstance accountInstance = AccountInstance.getInstance(a);
             if (accountInstance.getUserConfig().isClientActivated()) {
-                accountInstance.getMessagesController().checkProxyInfo(true);
+                accountInstance.getMessagesController().checkPromoInfo(true);
             }
         }
     }
@@ -648,6 +662,7 @@ public class ConnectionsManager extends BaseController {
     public static native void native_resumeNetwork(int currentAccount, boolean partial);
     public static native long native_getCurrentTimeMillis(int currentAccount);
     public static native int native_getCurrentTime(int currentAccount);
+    public static native int native_getCurrentDatacenterId(int currentAccount);
     public static native int native_getTimeDifference(int currentAccount);
     public static native void native_sendRequest(int currentAccount, long object, RequestDelegateInternal onComplete, QuickAckDelegate onQuickAck, WriteToSocketDelegate onWriteToSocket, int flags, int datacenterId, int connetionType, boolean immediate, int requestToken);
     public static native void native_cancelRequest(int currentAccount, int token, boolean notifyServer);
@@ -657,7 +672,7 @@ public class ConnectionsManager extends BaseController {
     public static native void native_applyDatacenterAddress(int currentAccount, int datacenterId, String ipAddress, int port);
     public static native int native_getConnectionState(int currentAccount);
     public static native void native_setUserId(int currentAccount, int id);
-    public static native void native_init(int currentAccount, int version, int layer, int apiId, String deviceModel, String systemVersion, String appVersion, String langCode, String systemLangCode, String configPath, String logPath, String regId, String cFingerprint, int userId, boolean enablePushConnection, boolean hasNetwork, int networkType);
+    public static native void native_init(int currentAccount, int version, int layer, int apiId, String deviceModel, String systemVersion, String appVersion, String langCode, String systemLangCode, String configPath, String logPath, String regId, String cFingerprint, String installer, int timezoneOffset, int userId, boolean enablePushConnection, boolean hasNetwork, int networkType);
     public static native void native_setProxySettings(int currentAccount, String address, int port, String username, String password, String secret);
     public static native void native_setLangCode(int currentAccount, String langCode);
     public static native void native_setRegId(int currentAccount, String regId);
@@ -1132,7 +1147,7 @@ public class ConnectionsManager extends BaseController {
                 for (int a = 0; a < len; a++) {
                     padding.append(characters.charAt(Utilities.random.nextInt(characters.length())));
                 }
-                URL downloadUrl = new URL("https://mozilla.cloudflare-dns.com/dns-query?name=" + domain + "&type=16&random_padding=" + padding);
+                URL downloadUrl = new URL("https://mozilla.cloudflare-dns.com/dns-query?name=" + domain + "&type=TXT&random_padding=" + padding);
                 URLConnection httpConnection = downloadUrl.openConnection();
                 httpConnection.addRequestProperty("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 10_0 like Mac OS X) AppleWebKit/602.1.38 (KHTML, like Gecko) Version/10.0 Mobile/14A5297c Safari/602.1");
                 httpConnection.addRequestProperty("accept", "application/dns-json");
@@ -1241,8 +1256,6 @@ public class ConnectionsManager extends BaseController {
                     throw new Exception("test backend");
                 }
                 firebaseRemoteConfig = FirebaseRemoteConfig.getInstance();
-                FirebaseRemoteConfigSettings configSettings = new FirebaseRemoteConfigSettings.Builder().setDeveloperModeEnabled(BuildConfig.DEBUG).build();
-                firebaseRemoteConfig.setConfigSettings(configSettings);
                 String currentValue = firebaseRemoteConfig.getString("ipconfigv3");
                 if (BuildVars.LOGS_ENABLED) {
                     FileLog.d("current firebase value = " + currentValue);
@@ -1251,30 +1264,30 @@ public class ConnectionsManager extends BaseController {
                 firebaseRemoteConfig.fetch(0).addOnCompleteListener(finishedTask -> {
                     final boolean success = finishedTask.isSuccessful();
                     Utilities.stageQueue.postRunnable(() -> {
-                        currentTask = null;
-                        String config = null;
                         if (success) {
-                            firebaseRemoteConfig.activateFetched();
-                            config = firebaseRemoteConfig.getString("ipconfigv3");
-                        }
-                        if (!TextUtils.isEmpty(config)) {
-                            byte[] bytes = Base64.decode(config, Base64.DEFAULT);
-                            try {
-                                NativeByteBuffer buffer = new NativeByteBuffer(bytes.length);
-                                buffer.writeBytes(bytes);
-                                int date = (int) (firebaseRemoteConfig.getInfo().getFetchTimeMillis() / 1000);
-                                native_applyDnsConfig(currentAccount, buffer.address, AccountInstance.getInstance(currentAccount).getUserConfig().getClientPhone(), date);
-                            } catch (Exception e) {
-                                FileLog.e(e);
-                            }
-                        } else {
-                            if (BuildVars.LOGS_ENABLED) {
-                                FileLog.d("failed to get firebase result");
-                                FileLog.d("start dns txt task");
-                            }
-                            DnsTxtLoadTask task = new DnsTxtLoadTask(currentAccount);
-                            task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, null, null, null);
-                            currentTask = task;
+                            firebaseRemoteConfig.activate().addOnCompleteListener(finishedTask2 -> {
+                                currentTask = null;
+                                String config = firebaseRemoteConfig.getString("ipconfigv3");
+                                if (!TextUtils.isEmpty(config)) {
+                                    byte[] bytes = Base64.decode(config, Base64.DEFAULT);
+                                    try {
+                                        NativeByteBuffer buffer = new NativeByteBuffer(bytes.length);
+                                        buffer.writeBytes(bytes);
+                                        int date = (int) (firebaseRemoteConfig.getInfo().getFetchTimeMillis() / 1000);
+                                        native_applyDnsConfig(currentAccount, buffer.address, AccountInstance.getInstance(currentAccount).getUserConfig().getClientPhone(), date);
+                                    } catch (Exception e) {
+                                        FileLog.e(e);
+                                    }
+                                } else {
+                                    if (BuildVars.LOGS_ENABLED) {
+                                        FileLog.d("failed to get firebase result");
+                                        FileLog.d("start dns txt task");
+                                    }
+                                    DnsTxtLoadTask task = new DnsTxtLoadTask(currentAccount);
+                                    task.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR, null, null, null);
+                                    currentTask = task;
+                                }
+                            });
                         }
                     });
                 });
